@@ -1,0 +1,61 @@
+name: Build and push image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set lowercase image name
+        run: echo "IMAGE_NAME=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Build image
+        id: build
+        run: |
+          tags=("${IMAGE_NAME}:sha-${GITHUB_SHA::8}")
+
+          if [[ "${GITHUB_REF}" == refs/heads/main ]]; then
+            tags+=("${IMAGE_NAME}:latest")
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            tags+=("${IMAGE_NAME}:${GITHUB_REF#refs/tags/}")
+          fi
+
+          tag_args=()
+          for tag in "${tags[@]}"; do
+            tag_args+=(-t "$tag")
+          done
+
+          podman build "${tag_args[@]}" -f Containerfile .
+
+          {
+            echo "tags<<EOF"
+            printf '%s\n' "${tags[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        run: podman login "${REGISTRY}" -u "${{ github.actor }}" --password-stdin <<< "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Push image
+        if: github.event_name != 'pull_request'
+        run: |
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] && podman push "$tag"
+          done <<< "${{ steps.build.outputs.tags }}"
