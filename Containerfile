@@ -15,8 +15,8 @@ RUN chmod +x /usr/local/bin/tailscale-bootstrap.sh
 RUN systemctl enable tailscaled
 RUN systemctl enable tailscale-bootstrap.service
 
-# drbd install
-RUN dnf5 install -y drbd
+# kernel headers install
+RUN dnf5 install -y kernel-devel kernel-headers
 
 # intel CPU and GPU support
 RUN dnf5 install -y \
