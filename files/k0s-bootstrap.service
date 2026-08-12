@@ -1,0 +1,12 @@
+[Unit]
+Description=K0s bootstrap
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/k0s-bootstrap.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

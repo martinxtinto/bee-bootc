@@ -1,0 +1,14 @@
+[Unit]
+Description=Tailscale bootstrap
+After=network-online.target tailscaled.service
+Wants=network-online.target
+Requires=tailscaled.service
+ConditionPathExists=/etc/tailscale/authkey
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/tailscale-bootstrap.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
