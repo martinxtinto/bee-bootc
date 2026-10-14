@@ -36,6 +36,16 @@ jobs:
       - name: Set lowercase image name
         run: echo "IMAGE_NAME=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
+      # Ubuntu 24.04 blocks unprivileged user namespaces by default, which makes
+      # rootless podman fail with "failed to reexec: Permission denied". The
+      # distro podman ships an AppArmor profile granting userns; the nixpkgs podman
+      # in the dev shell does not, so relax the restriction for this ephemeral runner.
+      - name: Allow rootless podman user namespaces
+        run: |
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
       - name: Build image
         run: nix run .#build
 

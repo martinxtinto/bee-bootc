@@ -72,6 +72,9 @@ nix flake check -L       # build all checks (bcvk, scripts)
 - CI installs Nix (`cachix/install-nix-action`), runs `nix flake check`, then `nix run .#build`.
   It also runs weekly (Saturday 03:00 UTC), tagging an additional `YYYY-MM-DD` image tag. The ISO
   is not built in CI (on-demand only).
+- CI relaxes `kernel.apparmor_restrict_unprivileged_userns` on the Ubuntu 24.04 runner before
+  building: rootless podman (the nixpkgs one in the dev shell) otherwise fails with
+  `failed to reexec: Permission denied`. A self-hosted runner image could bake this in instead.
 
 ## Gotchas
 
