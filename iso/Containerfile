@@ -1,0 +1,66 @@
+# Anaconda-based installer container for `image-builder`'s `bootc-generic-iso`
+# image type. It is built at runtime by scripts/build-iso.sh, which copies the
+# user-supplied kickstart into the build context as `install.ks` (the kickstart
+# is never committed to the repository nor stored in the Nix store).
+#
+# This follows the upstream example in image-builder's docs:
+# doc/20-advanced/20-bootc/10-isos.md
+FROM quay.io/fedora/fedora-bootc:43
+
+# Anaconda installer environment.
+RUN dnf install -qy \
+    anaconda \
+    anaconda-install-img-deps \
+    anaconda-dracut \
+    dracut-config-generic \
+    dracut-network \
+    net-tools \
+    grub2-efi-x64-cdboot \
+    plymouth \
+    default-fonts-core-sans \
+    default-fonts-other-sans \
+    google-noto-sans-cjk-fonts \
+    jq
+
+# Build tools required by image-builder's bootc-generic-iso image type.
+RUN dnf install -qy \
+    xorrisofs \
+    squashfs-tools
+
+RUN dnf clean all
+
+RUN mkdir -p /boot/efi && cp -ra /usr/lib/efi/*/*/EFI /boot/efi
+
+# ISO configuration consumed by image-builder.
+RUN mkdir -p /usr/lib/image-builder/bootc
+COPY iso.yaml /usr/lib/image-builder/bootc/iso.yaml
+
+# Kickstart, supplied at build time. The only copy lives in the (temporary)
+# build context and the resulting image.
+COPY install.ks /usr/share/anaconda/interactive-defaults.ks
+
+# Minimal lorax-equivalent wiring so Anaconda can run.
+RUN echo "install:x:0:0:root:/root:/usr/libexec/anaconda/run-anaconda" >> /etc/passwd && \
+    echo "install::14438:0:99999:7:::" >> /etc/shadow && \
+    passwd -d root
+
+RUN mv /usr/share/anaconda/list-harddrives-stub /usr/bin/list-harddrives && \
+    mv /etc/yum.repos.d /etc/anaconda.repos.d && \
+    ln -s /lib/systemd/system/anaconda.target /etc/systemd/system/default.target && \
+    rm -v /usr/lib/systemd/system-generators/systemd-gpt-auto-generator
+
+RUN ln -s /usr/lib/systemd/system/anaconda-shell@.service /usr/lib/systemd/system/autovt@.service
+
+RUN mkdir -p /usr/lib/systemd/logind.conf.d && \
+    printf '[Login]\nReserveVT=2\n' > /usr/lib/systemd/logind.conf.d/anaconda-shell.conf
+
+RUN mkdir -p /etc/systemd/user/pipewire.service.d && \
+    printf '[Unit]\nConditionUser=\n' > /etc/systemd/user/pipewire.service.d/allowroot.conf
+RUN mkdir -p /etc/systemd/user/pipewire.socket.d && \
+    printf '[Unit]\nConditionUser=\n' > /etc/systemd/user/pipewire.socket.d/allowroot.conf
+
+RUN mkdir "$(realpath /root)" && \
+    kernel=$(kernel-install list --json pretty | jq -r '.[] | select(.has_kernel == true) | .version') && \
+    DRACUT_NO_XATTR=1 dracut --force -v --zstd --reproducible --no-hostonly \
+        --add "anaconda" \
+        "/usr/lib/modules/${kernel}/initramfs.img" "${kernel}"

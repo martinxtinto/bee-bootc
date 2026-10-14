@@ -73,9 +73,12 @@
       '';
     };
 
-    # Tools needed by the bootc-image-builder fallback flow.
+    # Tools needed by the VM/ISO flows (and rootless podman in CI).
     vmTools = with pkgs; [
       podman
+      fuse-overlayfs
+      shadow
+      slirp4netns
       qemu
       openssh
       skopeo
@@ -103,6 +106,14 @@
         ovmf = "${pkgs.OVMF.fd}";
       });
     };
+
+    # On-demand installer ISO with a runtime-supplied kickstart (never
+    # committed, never in the Nix store). Rootful podman required.
+    buildIso = pkgs.writeShellApplication {
+      name = "bee-bootc-iso";
+      runtimeInputs = with pkgs; [podman git coreutils findutils];
+      text = builtins.readFile ./scripts/build-iso.sh;
+    };
   in {
     packages.${system} = {
       inherit bcvk;
@@ -110,6 +121,7 @@
       build = buildImage;
       vm = testVm;
       vm-bib = testVmBib;
+      iso = buildIso;
     };
 
     apps.${system} = {
@@ -128,11 +140,24 @@
         program = "${testVmBib}/bin/bee-bootc-vm-bib";
         meta.description = "Build a qcow2 with bootc-image-builder and boot it under QEMU";
       };
+      iso = {
+        type = "app";
+        program = "${buildIso}/bin/bee-bootc-iso";
+        meta.description = "Build an installer ISO from a runtime-supplied kickstart";
+      };
       default = {
         type = "app";
         program = "${testVm}/bin/bee-bootc-vm";
         meta.description = "Build bee-bootc and boot it as an ephemeral VM (bcvk)";
       };
+    };
+
+    checks.${system} = {
+      inherit bcvk;
+      build = buildImage;
+      vm = testVm;
+      vm-bib = testVmBib;
+      iso = buildIso;
     };
 
     devShells.${system}.default = pkgs.mkShell {

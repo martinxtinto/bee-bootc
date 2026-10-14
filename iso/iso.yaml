@@ -1,0 +1,8 @@
+# ISO configuration for image-builder's bootc-generic-iso image type.
+# The boot menu label here must match the `inst.stage2=hd:LABEL=...` below.
+label: "bee-bootc-installer"
+grub2:
+  entries:
+    - name: "Install bee-bootc"
+      linux: "/images/pxeboot/vmlinuz inst.stage2=hd:LABEL=bee-bootc-installer console=tty0 inst.text selinux=0"
+      initrd: "/images/pxeboot/initrd.img"
