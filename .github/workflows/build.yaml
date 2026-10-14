@@ -6,6 +6,9 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main]
+  schedule:
+    # Weekly rebuild to pick up upstream base/image updates (Saturday 03:00 UTC).
+    - cron: "0 3 * * 6"
   workflow_dispatch:
 
 env:
@@ -22,11 +25,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Nix checks
+        run: nix flake check -L
+
       - name: Set lowercase image name
         run: echo "IMAGE_NAME=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
       - name: Build image
-        id: build
+        run: nix run .#build
+
+      - name: Tag image
+        id: tags
+        shell: nix develop -c bash -e {0}
         run: |
           tags=("${IMAGE_NAME}:sha-${GITHUB_SHA::8}")
 
@@ -36,12 +51,13 @@ jobs:
             tags+=("${IMAGE_NAME}:${GITHUB_REF#refs/tags/}")
           fi
 
-          tag_args=()
-          for tag in "${tags[@]}"; do
-            tag_args+=(-t "$tag")
-          done
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
+            tags+=("${IMAGE_NAME}:$(date -u +%F)")
+          fi
 
-          podman build "${tag_args[@]}" -f Containerfile .
+          for tag in "${tags[@]}"; do
+            podman tag bee-bootc:test "$tag"
+          done
 
           {
             echo "tags<<EOF"
@@ -51,11 +67,13 @@ jobs:
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
+        shell: nix develop -c bash -e {0}
         run: podman login "${REGISTRY}" -u "${{ github.actor }}" --password-stdin <<< "${{ secrets.GITHUB_TOKEN }}"
 
       - name: Push image
         if: github.event_name != 'pull_request'
+        shell: nix develop -c bash -e {0}
         run: |
           while IFS= read -r tag; do
             [[ -n "$tag" ]] && podman push "$tag"
-          done <<< "${{ steps.build.outputs.tags }}"
+          done <<< "${{ steps.tags.outputs.tags }}"
