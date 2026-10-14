@@ -72,12 +72,40 @@ nix run .#vm-bib            # requires rootful podman (sudo)
 # then: ssh -i output/vm/id_ed25519 -p 2222 root@localhost
 ```
 
+## Installer ISO (Nix, on demand)
+
+`nix run .#iso` builds an Anaconda installer ISO for bee-bootc with a kickstart you supply at
+runtime, using the newer [`image-builder`](https://github.com/osbuild/image-builder)
+(`bootc-generic-iso`). The kickstart is read at runtime — it is **never committed to the repo and
+never stored in the Nix store**.
+
+```bash
+nix run .#iso -- /path/to/install.ks      # requires rootful podman (sudo)
+nix run .#iso -- --no-build /path/to/install.ks
+```
+
+By default the image is embedded in the ISO for offline installation
+(`--bootc-installer-payload-ref`), and Anaconda reads the kickstart from the installer container's
+`/usr/share/anaconda/interactive-defaults.ks`. The ISO is written under `output/`.
+
+Because the payload is embedded, the kickstart should install from the local container store, e.g.:
+
+```
+bootc --source-imgref containers-storage:localhost/bee-bootc:test \
+      --target-imgref localhost/bee-bootc:test
+```
+
+Pass `--online` to skip embedding the payload; the kickstart then has to reference the image from a
+registry (smaller ISO).
+
 ## CI
 
-`.github/workflows/build.yaml` builds the image with podman and pushes to GHCR:
+`.github/workflows/build.yaml` installs Nix (`cachix/install-nix-action`), runs `nix flake check`,
+builds the image with the flake, and pushes to GHCR:
 
 - Every build is tagged `sha-<8>`.
 - Pushes to `main` additionally get `latest`.
+- Scheduled rebuilds (weekly, Saturday 03:00 UTC) additionally get an ISO-date tag (`YYYY-MM-DD`).
 - Tags matching `v*` additionally get that tag name.
 - Pull requests build but do not push.
 
@@ -88,11 +116,15 @@ Containerfile                 # the image definition
 files/                        # configs baked into the image
   10-disable-selinux.toml     # bootc kernel args
   90-custom-vardirs.conf      # tmpfiles.d entries
-scripts/                      # VM testing helpers (invoked by the flake)
+scripts/                      # helpers (invoked by the flake)
   build-image.sh
   test-vm.sh                  # bcvk ephemeral VM
   test-vm-bib.sh              # bootc-image-builder fallback
+  build-iso.sh                # on-demand installer ISO
   podman-shim.sh              # exposes /nix to bcvk's qemu container
-flake.nix                     # nix dev shell, apps and the bcvk package
+iso/                          # templates for the installer ISO (no secrets)
+  Containerfile               # Anaconda installer container (kickstart supplied at runtime)
+  iso.yaml                    # ISO label + grub2 menu entries
+flake.nix                     # nix dev shell, apps, checks and the bcvk package
 .github/workflows/build.yaml  # build + push pipeline
 ```

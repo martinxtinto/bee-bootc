@@ -13,9 +13,12 @@ ephemeral test VM.
   and `bootc container lint` as the final check.
 - `files/10-disable-selinux.toml` — bootc kernel args (disables SELinux).
 - `files/90-custom-vardirs.conf` — tmpfiles.d entries for writable directories.
-- `flake.nix` — dev shell, `build`/`vm`/`vm-bib` apps, and the pinned `bcvk` package.
-- `scripts/*.sh` — helpers invoked by the flake (`build-image.sh`, `test-vm.sh`, `test-vm-bib.sh`).
-- `.github/workflows/build.yaml` — build/push pipeline.
+- `flake.nix` — dev shell, `build`/`vm`/`vm-bib`/`iso` apps, `checks`, and the pinned `bcvk`
+  package.
+- `scripts/*.sh` — helpers invoked by the flake (`build-image.sh`, `test-vm.sh`,
+  `test-vm-bib.sh`, `build-iso.sh`, `podman-shim.sh`).
+- `iso/` — installer-ISO templates (`Containerfile`, `iso.yaml`). Never contains a kickstart.
+- `.github/workflows/build.yaml` — Nix-based build/push pipeline.
 
 ## Conventions
 
@@ -30,6 +33,8 @@ ephemeral test VM.
 - Add a new `RUN` block for a new concern instead of expanding an unrelated one.
 - When adding writable state, add a tmpfiles.d entry rather than writing to read-only paths.
 - Scripts under `scripts/` use `set -euo pipefail` and are wrapped by `writeShellApplication`.
+- Never commit a kickstart, and never read one at Nix evaluation time (no `builtins.readFile` /
+  `import` / `path`). `scripts/build-iso.sh` reads it at runtime; keep it that way.
 
 ## Build and verify
 
@@ -43,10 +48,12 @@ primary verification. Run a local build after any `Containerfile` change.
 ## Testing (Nix)
 
 ```bash
-nix develop          # podman, qemu, virtiofsd, bcvk
-nix run .#build      # build the image
-nix run .#vm         # build + boot an ephemeral VM (bcvk), SSH in
-nix run .#vm-bib     # fallback: qcow2 via bootc-image-builder + qemu (needs sudo)
+nix develop              # podman, qemu, virtiofsd, bcvk
+nix run .#build          # build the image
+nix run .#vm             # build + boot an ephemeral VM (bcvk), SSH in
+nix run .#vm-bib         # fallback: qcow2 via bootc-image-builder + qemu (needs sudo)
+nix run .#iso -- ks      # on-demand installer ISO from a runtime kickstart (needs sudo)
+nix flake check -L       # build all checks (bcvk, scripts)
 ```
 
 - The image must keep `openssh-server`, `openssh-clients`, `mount` (util-linux) and `chroot`
@@ -57,6 +64,14 @@ nix run .#vm-bib     # fallback: qcow2 via bootc-image-builder + qemu (needs sud
   bc vk at the nixpkgs qemu/virtiofsd, so the Nix-wrapped bcvk works on any nix host. If bc vk
   still fails, `scripts/test-vm-bib.sh` is the fallback.
 - Flakes only see git-tracked files, so `git add` new scripts before running `nix run`.
+- `nix run .#iso` builds an installer ISO with the newer `image-builder`
+  (`ghcr.io/osbuild/image-builder-cli`, `bootc-generic-iso`). `iso/Containerfile` mirrors
+  image-builder's generic-ISO example and `COPY`s the runtime kickstart to
+  `/usr/share/anaconda/interactive-defaults.ks`. Never commit a kickstart; `build-iso.sh` copies it
+  into a temporary build context.
+- CI installs Nix (`cachix/install-nix-action`), runs `nix flake check`, then `nix run .#build`.
+  It also runs weekly (Saturday 03:00 UTC), tagging an additional `YYYY-MM-DD` image tag. The ISO
+  is not built in CI (on-demand only).
 
 ## Gotchas
 
