@@ -9,11 +9,7 @@ RUN dnf5 install -y \
 RUN dnf5 install -y dnf5-plugins
 RUN dnf5 config-manager addrepo --from-repofile=https://pkgs.tailscale.com/stable/fedora/tailscale.repo
 RUN dnf5 install -y tailscale
-COPY files/tailscale-bootstrap.sh /usr/local/bin/tailscale-bootstrap.sh
-COPY files/tailscale-bootstrap.service /usr/lib/systemd/system/tailscale-bootstrap.service
-RUN chmod +x /usr/local/bin/tailscale-bootstrap.sh
 RUN systemctl enable tailscaled
-RUN systemctl enable tailscale-bootstrap.service
 
 # kernel headers install
 RUN dnf5 install -y kernel-devel kernel-headers
@@ -36,18 +32,23 @@ RUN dnf5 install -y \
     smartmontools \
     lm_sensors
 
-# k0s
+# k0s node prerequisites (k0s itself is installed and managed by k0sctl)
 RUN dnf5 remove -y zram-generator-defaults || true
-RUN curl -sSLf https://get.k0s.sh | sh
+RUN dnf5 install -y \
+    curl \
+    hostname \
+    iproute \
+    shadow-utils \
+    kmod
 RUN mkdir -p /usr/lib/modules-load.d && \
     printf 'overlay\nbr_netfilter\n' > /usr/lib/modules-load.d/k0s.conf
 RUN mkdir -p /usr/lib/sysctl.d && \
     printf 'net.bridge.bridge-nf-call-iptables=1\nnet.ipv4.ip_forward=1\n' \
     > /usr/lib/sysctl.d/90-k0s.conf
-COPY files/k0s-bootstrap.sh /usr/local/bin/k0s-bootstrap.sh
-COPY files/k0s-bootstrap.service /usr/lib/systemd/system/k0s-bootstrap.service
-RUN chmod +x /usr/local/bin/k0s-bootstrap.sh
-RUN systemctl enable k0s-bootstrap.service
+
+# ssh access for k0sctl and bcvk (users and keys are provisioned at install time)
+RUN dnf5 install -y openssh-server openssh-clients
+RUN systemctl enable sshd
 
 # disable selinux
 RUN mkdir -p /usr/lib/bootc/kargs.d
