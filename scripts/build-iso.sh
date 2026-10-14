@@ -10,20 +10,10 @@
 #
 # Usage: build-iso.sh [--no-build] [--online] KICKSTART
 #
-#   --no-build   Reuse an already-built bee-bootc:test image.
+#   --no-build   Reuse an already-built localhost/bee-bootc:test image.
 #   --online     Do not embed the payload image; the kickstart must reference
 #                the image from a registry (smaller ISO).
 set -euo pipefail
-
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-output="$repo_root/output"
-payload_image="localhost/bee-bootc:test"
-iso_builder_image="bee-bootc-iso:test"
-image_builder_ref="ghcr.io/osbuild/image-builder-cli:latest"
-
-build=1
-online=0
-kickstart=""
 
 usage() {
     cat <<'EOF'
@@ -32,11 +22,18 @@ Usage: build-iso.sh [--no-build] [--online] KICKSTART
 Build an installer ISO for bee-bootc with a user-supplied kickstart embedded,
 using image-builder's bootc-generic-iso image type. Requires rootful podman.
 
-  --no-build   Reuse an already-built bee-bootc:test image.
+  --no-build   Reuse an already-built localhost/bee-bootc:test image.
   --online     Do not embed the payload image; the kickstart must reference
                the image from a registry (smaller ISO).
 EOF
 }
+
+iso_builder_image="bee-bootc-iso:test"
+image_builder_mounts=()
+
+build=1
+online=0
+kickstart=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -66,8 +63,11 @@ if [ ! -f "$kickstart" ]; then
 fi
 kickstart="$(readlink -f "$kickstart")"
 
+repo_root="$(resolve_repo_root)"
+output="$repo_root/output"
+
 if [ "$build" -eq 1 ]; then
-    sudo podman build -t "$payload_image" "$repo_root"
+    build_payload "$repo_root"
 fi
 
 # Build context for the installer container. The kickstart is copied here and
@@ -88,18 +88,15 @@ if [ "$online" -eq 0 ]; then
     payload_args+=(--bootc-installer-payload-ref "$payload_image")
 fi
 
-sudo podman run --rm --privileged --pull=newer \
-    --security-opt label=type:unconfined_t \
-    -v "$output:/output" \
-    -v /var/lib/containers/storage:/var/lib/containers/storage \
-    "$image_builder_ref" \
+run_image_builder "$output" \
     build \
     --bootc-ref "localhost/$iso_builder_image" \
     "${payload_args[@]}" \
     --bootc-default-fs ext4 \
     --output-dir /output \
+    --output-name bee-bootc-installer \
     bootc-generic-iso
 
 echo
 echo "ISO(s) written under: $output"
-find "$output" -maxdepth 3 -name '*.iso' -print 2>/dev/null || true
+find "$output" -maxdepth 2 -type f -name '*.iso' -print 2>/dev/null || true

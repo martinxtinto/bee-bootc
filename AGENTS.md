@@ -13,10 +13,11 @@ ephemeral test VM.
   and `bootc container lint` as the final check.
 - `files/10-disable-selinux.toml` — bootc kernel args (disables SELinux).
 - `files/90-custom-vardirs.conf` — tmpfiles.d entries for writable directories.
-- `flake.nix` — dev shell, `build`/`vm`/`vm-bib`/`iso` apps, `checks`, and the pinned `bcvk`
-  package.
-- `scripts/*.sh` — helpers invoked by the flake (`build-image.sh`, `test-vm.sh`,
-  `test-vm-bib.sh`, `build-iso.sh`, `podman-shim.sh`).
+- `flake.nix` — dev shell, `build`/`vm`/`vm-disk`/`iso`/`disk` apps, `checks`, and the pinned
+  `bcvk` package.
+- `scripts/*.sh` — helpers invoked by the flake: `lib.sh` (shared image-builder helpers),
+  `build-image.sh`, `test-vm.sh`, `test-vm-disk.sh`, `build-iso.sh`, `build-disk.sh`,
+  `podman-shim.sh`.
 - `iso/` — installer-ISO templates (`Containerfile`, `iso.yaml`). Never contains a kickstart.
 - `.github/workflows/build.yaml` — Nix-based build/push pipeline.
 
@@ -33,8 +34,11 @@ ephemeral test VM.
 - Add a new `RUN` block for a new concern instead of expanding an unrelated one.
 - When adding writable state, add a tmpfiles.d entry rather than writing to read-only paths.
 - Scripts under `scripts/` use `set -euo pipefail` and are wrapped by `writeShellApplication`.
-- Never commit a kickstart, and never read one at Nix evaluation time (no `builtins.readFile` /
-  `import` / `path`). `scripts/build-iso.sh` reads it at runtime; keep it that way.
+  `scripts/lib.sh` holds the shared image-builder helpers and is concatenated ahead of each script
+  in `flake.nix` (so it must not contain a shebang or `set` options).
+- Never commit a kickstart or blueprint, and never read one at Nix evaluation time (no
+  `builtins.readFile` / `import` / `path`). `scripts/build-iso.sh` and `scripts/build-disk.sh` read
+  them at runtime; keep it that way.
 
 ## Build and verify
 
@@ -51,8 +55,9 @@ primary verification. Run a local build after any `Containerfile` change.
 nix develop              # podman, qemu, virtiofsd, bcvk
 nix run .#build          # build the image
 nix run .#vm             # build + boot an ephemeral VM (bcvk), SSH in
-nix run .#vm-bib         # fallback: qcow2 via bootc-image-builder + qemu (needs sudo)
+nix run .#vm-disk        # fallback: qcow2 via image-builder + qemu (needs sudo)
 nix run .#iso -- ks      # on-demand installer ISO from a runtime kickstart (needs sudo)
+nix run .#disk -- opts   # on-demand disk image, optional runtime blueprint/size (needs sudo)
 nix flake check -L       # build all checks (bcvk, scripts)
 ```
 
@@ -62,13 +67,17 @@ nix flake check -L       # build all checks (bcvk, scripts)
 - `bcvk` runs QEMU in a privileged podman container that bind-mounts the host's `/usr`. The
   `podman` shim in `scripts/podman-shim.sh` exposes the Nix store into that container and points
   bc vk at the nixpkgs qemu/virtiofsd, so the Nix-wrapped bcvk works on any nix host. If bc vk
-  still fails, `scripts/test-vm-bib.sh` is the fallback.
+  still fails, `scripts/test-vm-disk.sh` is the fallback.
 - Flakes only see git-tracked files, so `git add` new scripts before running `nix run`.
 - `nix run .#iso` builds an installer ISO with the newer `image-builder`
   (`ghcr.io/osbuild/image-builder-cli`, `bootc-generic-iso`). `iso/Containerfile` mirrors
   image-builder's generic-ISO example and `COPY`s the runtime kickstart to
   `/usr/share/anaconda/interactive-defaults.ks`. Never commit a kickstart; `build-iso.sh` copies it
   into a temporary build context.
+- `nix run .#disk` builds a disk image (QEMU `qcow2` by default; also `raw`, `vmdk`, `vhd`, `ova`,
+  `pxe-tar-xz`) with the same `image-builder`. An optional blueprint is read at runtime; disk size
+  is set via the blueprint's root filesystem minimum size (`--size`). Outputs land in `output/`
+  with a deterministic name (`--output-name`).
 - CI installs Nix (`cachix/install-nix-action`), runs `nix flake check`, then `nix run .#build`.
   It also runs weekly (Saturday 03:00 UTC), tagging an additional `YYYY-MM-DD` image tag. The ISO
   is not built in CI (on-demand only).

@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Fallback test flow: build bee-bootc, convert it to a qcow2 with
-# bootc-image-builder, and boot it as an ephemeral VM under QEMU.
+# Fallback test flow: build bee-bootc, generate a qcow2 with image-builder, and
+# boot it as an ephemeral VM under QEMU.
 #
 # Use this when `bcvk ephemeral` cannot work on the host (for example when
 # QEMU/virtiofsd are not visible in the host's /usr, which bcvk relies on).
 # Requires rootful podman (sudo) and KVM.
 #
-# Usage: test-vm-bib.sh [--no-build] [--graphical] [--memory MiB] [--vcpus N] [--ssh-port PORT]
+# Usage: test-vm-disk.sh [--no-build] [--graphical] [--memory MiB] [--vcpus N] [--ssh-port PORT]
 set -euo pipefail
 
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-image="bee-bootc:test"
+repo_root="$(resolve_repo_root)"
 output="$repo_root/output"
+image_builder_mounts=()
 memory=4096
 vcpus=2
 ssh_port=2222
@@ -22,16 +22,28 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --no-build) build=0 ;;
         --graphical) graphical=1 ;;
-        --memory) memory="$2"; shift ;;
-        --vcpus) vcpus="$2"; shift ;;
-        --ssh-port) ssh_port="$2"; shift ;;
-        *) echo "unknown option: $1" >&2; exit 2 ;;
+        --memory)
+            memory="$2"
+            shift
+            ;;
+        --vcpus)
+            vcpus="$2"
+            shift
+            ;;
+        --ssh-port)
+            ssh_port="$2"
+            shift
+            ;;
+        *)
+            echo "unknown option: $1" >&2
+            exit 2
+            ;;
     esac
     shift
 done
 
 if [ "$build" -eq 1 ]; then
-    sudo podman build -t "$image" "$repo_root"
+    build_payload "$repo_root"
 fi
 
 # Ephemeral SSH keypair, generated per checkout and never committed.
@@ -43,11 +55,11 @@ if [ ! -f "$key" ]; then
 fi
 pubkey="$(cat "$key.pub")"
 
-# bootc-image-builder customizations: grant root (for k0sctl) and a
-# wheel user SSH access using the ephemeral key.
-cat > "$vm_dir/config.toml" <<EOF
-[[customizations.sshkey]]
-user = "root"
+# Blueprint customizations: grant root (for k0sctl) and a wheel user SSH access
+# using the ephemeral key. Written at runtime; never committed or stored.
+cat >"$vm_dir/blueprint.toml" <<EOF
+[[customizations.user]]
+name = "root"
 key = "$pubkey"
 
 [[customizations.user]]
@@ -56,17 +68,19 @@ groups = ["wheel"]
 key = "$pubkey"
 EOF
 
-# Build the qcow2 from the local container image.
 mkdir -p "$output"
-sudo podman run --rm --privileged --pull=newer \
-    --security-opt label=type:unconfined_t \
-    -v "$output:/output" \
-    -v "$vm_dir/config.toml:/config.toml:ro" \
-    -v /var/lib/containers/storage:/var/lib/containers/storage \
-    quay.io/osbuild/bootc-image-builder:latest \
-    --type qcow2 --local "$image"
+image_builder_mounts=(-v "$vm_dir/blueprint.toml:/blueprint.toml:ro")
 
-disk="$output/qcow2/disk.qcow2"
+run_image_builder "$output" \
+    build \
+    --bootc-ref "$payload_image" \
+    --blueprint /blueprint.toml \
+    --bootc-default-fs ext4 \
+    --output-dir /output \
+    --output-name bee-bootc \
+    qcow2
+
+disk="$output/bee-bootc.qcow2"
 if [ ! -f "$disk" ]; then
     echo "expected disk image not found: $disk" >&2
     exit 1

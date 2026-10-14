@@ -87,6 +87,9 @@
       iproute2
     ];
 
+    lib = builtins.readFile ./scripts/lib.sh;
+    withLib = text: lib + "\n" + text;
+
     buildImage = pkgs.writeShellApplication {
       name = "bee-bootc-build";
       runtimeInputs = with pkgs; [podman git];
@@ -99,12 +102,12 @@
       text = builtins.readFile ./scripts/test-vm.sh;
     };
 
-    testVmBib = pkgs.writeShellApplication {
-      name = "bee-bootc-vm-bib";
+    testVmDisk = pkgs.writeShellApplication {
+      name = "bee-bootc-vm-disk";
       runtimeInputs = with pkgs; [git] ++ vmTools;
-      text = builtins.readFile (pkgs.replaceVars ./scripts/test-vm-bib.sh {
+      text = withLib (builtins.readFile (pkgs.replaceVars ./scripts/test-vm-disk.sh {
         ovmf = "${pkgs.OVMF.fd}";
-      });
+      }));
     };
 
     # On-demand installer ISO with a runtime-supplied kickstart (never
@@ -112,7 +115,15 @@
     buildIso = pkgs.writeShellApplication {
       name = "bee-bootc-iso";
       runtimeInputs = with pkgs; [podman git coreutils findutils];
-      text = builtins.readFile ./scripts/build-iso.sh;
+      text = withLib (builtins.readFile ./scripts/build-iso.sh);
+    };
+
+    # On-demand disk image (QEMU qcow2 by default) with an optional runtime
+    # blueprint for customizations and disk size. Rootful podman required.
+    buildDisk = pkgs.writeShellApplication {
+      name = "bee-bootc-disk";
+      runtimeInputs = with pkgs; [podman git coreutils findutils];
+      text = withLib (builtins.readFile ./scripts/build-disk.sh);
     };
   in {
     packages.${system} = {
@@ -120,8 +131,9 @@
       default = testVm;
       build = buildImage;
       vm = testVm;
-      vm-bib = testVmBib;
+      vm-disk = testVmDisk;
       iso = buildIso;
+      disk = buildDisk;
     };
 
     apps.${system} = {
@@ -135,15 +147,20 @@
         program = "${testVm}/bin/bee-bootc-vm";
         meta.description = "Build bee-bootc and boot it as an ephemeral VM (bcvk)";
       };
-      vm-bib = {
+      vm-disk = {
         type = "app";
-        program = "${testVmBib}/bin/bee-bootc-vm-bib";
-        meta.description = "Build a qcow2 with bootc-image-builder and boot it under QEMU";
+        program = "${testVmDisk}/bin/bee-bootc-vm-disk";
+        meta.description = "Build a qcow2 with image-builder and boot it under QEMU";
       };
       iso = {
         type = "app";
         program = "${buildIso}/bin/bee-bootc-iso";
         meta.description = "Build an installer ISO from a runtime-supplied kickstart";
+      };
+      disk = {
+        type = "app";
+        program = "${buildDisk}/bin/bee-bootc-disk";
+        meta.description = "Build a disk image, optionally with a runtime blueprint";
       };
       default = {
         type = "app";
@@ -156,8 +173,9 @@
       inherit bcvk;
       build = buildImage;
       vm = testVm;
-      vm-bib = testVmBib;
+      vm-disk = testVmDisk;
       iso = buildIso;
+      disk = buildDisk;
     };
 
     devShells.${system}.default = pkgs.mkShell {

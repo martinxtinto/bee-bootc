@@ -64,11 +64,11 @@ host. bc vk runs QEMU in a podman container that only mounts the host's `/usr`; 
 `bcvk` with a small `podman` shim that exposes the Nix store and points bc vk at the nixpkgs
 qemu/virtiofsd, so it works on any nix-enabled host.
 
-If bc vk still cannot work on your host, use the bootc-image-builder fallback, which builds a
+If bc vk still cannot work on your host, use the image-builder fallback, which generates a
 qcow2 and boots it under QEMU:
 
 ```bash
-nix run .#vm-bib            # requires rootful podman (sudo)
+nix run .#vm-disk           # requires rootful podman (sudo)
 # then: ssh -i output/vm/id_ed25519 -p 2222 root@localhost
 ```
 
@@ -98,6 +98,29 @@ bootc --source-imgref containers-storage:localhost/bee-bootc:test \
 Pass `--online` to skip embedding the payload; the kickstart then has to reference the image from a
 registry (smaller ISO).
 
+## Disk image (Nix, on demand)
+
+`nix run .#disk` builds a disk image for bee-bootc (QEMU by default) with the
+[`image-builder`](https://github.com/osbuild/image-builder), reusing the same machinery as the ISO.
+An optional blueprint (users, SSH keys, hostname, ...) is read at runtime — it is **never committed
+to the repo and never stored in the Nix store**.
+
+```bash
+nix run .#disk -- --size 20G --blueprint ./my-blueprint.toml   # requires sudo
+nix run .#disk -- --no-build --format raw --size "40 GiB"
+```
+
+Options:
+
+- `--format` — `qcow2` (default), `raw`, `vmdk`, `vhd`, `ova`, `pxe-tar-xz`.
+- `--size` — root filesystem minimum size (e.g. `20G` or `"20 GiB"`); since the root partition
+  grows to fill the disk, this sets the effective image size.
+- `--blueprint FILE` — blueprint with customizations (optional). Don't also set a `/` filesystem
+  in it when using `--size`.
+- `--fs` — default filesystem (default `ext4`), `--name` — output basename (default `bee-bootc`).
+
+Images are written under `output/`, e.g. `output/bee-bootc.qcow2`.
+
 ## CI
 
 `.github/workflows/build.yaml` installs Nix (`cachix/install-nix-action`), runs `nix flake check`,
@@ -117,10 +140,12 @@ files/                        # configs baked into the image
   10-disable-selinux.toml     # bootc kernel args
   90-custom-vardirs.conf      # tmpfiles.d entries
 scripts/                      # helpers (invoked by the flake)
+  lib.sh                      # shared image-builder helpers
   build-image.sh
   test-vm.sh                  # bcvk ephemeral VM
-  test-vm-bib.sh              # bootc-image-builder fallback
+  test-vm-disk.sh             # image-builder qcow2 + QEMU fallback
   build-iso.sh                # on-demand installer ISO
+  build-disk.sh               # on-demand disk image (QEMU et al.)
   podman-shim.sh              # exposes /nix to bcvk's qemu container
 iso/                          # templates for the installer ISO (no secrets)
   Containerfile               # Anaconda installer container (kickstart supplied at runtime)
