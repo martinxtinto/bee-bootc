@@ -46,6 +46,9 @@ RUN mkdir -p /usr/lib/sysctl.d && \
     printf 'net.bridge.bridge-nf-call-iptables=1\nnet.ipv4.ip_forward=1\n' \
     > /usr/lib/sysctl.d/90-k0s.conf
 
+# inotify limits
+COPY files/90-inotify.conf /usr/lib/sysctl.d/90-inotify.conf
+
 # ssh access for k0sctl and bcvk (users and keys are provisioned at install time)
 RUN dnf5 install -y openssh-server openssh-clients
 RUN systemctl enable sshd
